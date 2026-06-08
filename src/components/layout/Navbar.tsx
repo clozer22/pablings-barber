@@ -15,6 +15,7 @@ export default function Navbar() {
     { name: 'Register', path: '/register' },
     { name: 'Book Now', path: '/book' },
     { name: 'Staff', path: '/staff' },
+    { name: 'Admin', path: '/admin' },
   ];
 
   return (
