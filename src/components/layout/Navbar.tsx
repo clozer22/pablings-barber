@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Scissors, Menu, X } from 'lucide-react';
@@ -8,11 +8,23 @@ import { motion, AnimatePresence } from 'framer-motion';
 export default function Navbar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCurrentUser(localStorage.getItem('pablings_current_user'));
+    }
+    const handleStorage = () => {
+      setCurrentUser(localStorage.getItem('pablings_current_user'));
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   const navItems = [
     { name: 'Home', path: '/' },
     { name: 'Services', path: '/services' },
-    { name: 'Register', path: '/register' },
+    { name: currentUser ? 'My Profile' : 'Portal', path: '/profile' },
     { name: 'Book Now', path: '/book' },
     { name: 'Staff', path: '/staff' },
     { name: 'Admin', path: '/admin' },
@@ -23,7 +35,7 @@ export default function Navbar() {
       <div className="flex items-center justify-between">
         <Link href="/" onClick={() => setIsOpen(false)} className="flex items-center gap-2 text-xl font-bold tracking-tighter">
           <Scissors className="text-amber-500" size={24} />
-          <span>GENTS' LOUNGE</span>
+          <span>PABLINGS</span>
         </Link>
         
         <div className="hidden md:flex gap-8">

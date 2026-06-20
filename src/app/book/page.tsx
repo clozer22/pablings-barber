@@ -78,7 +78,7 @@ export default function Book() {
                       </div>
                       <div className="flex-1">
                         <p className="font-bold">{service.name}</p>
-                        <p className="text-xs text-zinc-500">${service.price} • {service.duration} mins</p>
+                        <p className="text-xs text-zinc-500">₱{service.price} • {service.duration} mins</p>
                       </div>
                       <Icons.ChevronRight className="text-zinc-700" size={20} />
                     </button>
@@ -152,7 +152,7 @@ export default function Book() {
               </div>
               <h2 className="text-2xl sm:text-3xl font-bold mb-2">BOOKING CONFIRMED!</h2>
               <p className="text-zinc-400 mb-8 text-sm sm:text-base">
-                Your payment of <span className="text-white font-bold">${booking.amountToPay}</span> was successful. We'll see you on May 20 at {booking.selectedTime}.
+                Your payment of <span className="text-white font-bold">₱{booking.amountToPay}</span> was successful. We'll see you on May 20 at {booking.selectedTime}.
               </p>
               
               <div className="space-y-3">

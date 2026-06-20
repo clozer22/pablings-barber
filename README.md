@@ -1,4 +1,4 @@
-# The Gents' Lounge - Premium Barber Shop Demo
+# Pablings Barbershop - Premium Barber Shop Demo
 
 This project is a modern, responsive web application for a premium barber shop. It provides a polished user interface for customers to view services, register as walk-ins, and seamlessly book appointments online. 
 

@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "The Gents' Lounge | Premium Barber Shop",
+  title: "Pablings Barbershop | Premium Barber Shop",
   description: "Book your premium grooming experience online. Classic cuts, modern style.",
 };
 
