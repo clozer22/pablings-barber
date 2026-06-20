@@ -24,17 +24,9 @@ import {
   Download,
   Crown
 } from 'lucide-react';
-import { getTransactions, updateTransaction, resetDatabase, DbTransaction } from '@/lib/trustLockDb';
+import { getTransactions, updateTransaction, resetDatabase, DbTransaction, getEmployees, addEmployee, updateEmployee, DbEmployee } from '@/lib/trustLockDb';
 
-interface Employee {
-  id: string;
-  name: string;
-  specialty: string;
-  status: 'Available' | 'Busy' | 'Off-Duty';
-  branch: string;
-  rating: number;
-  avatarColor: string;
-}
+// DbEmployee imported from trustLockDb
 
 interface Branch {
   id: string;
@@ -80,21 +72,19 @@ export default function AdminDashboard() {
     }, 3000);
   };
 
-  // Poll transactions from localStorage
+  // Poll transactions and employees from localStorage
   useEffect(() => {
     setTransactions(getTransactions());
+    setEmployees(getEmployees());
     const interval = setInterval(() => {
       setTransactions(getTransactions());
+      setEmployees(getEmployees());
     }, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // Hardcoded Barbers Roster
-  const [employees, setEmployees] = useState<Employee[]>([
-    { id: 'EMP-01', name: 'Barber Mark', specialty: 'Classic Cuts & Fades', status: 'Available', branch: 'Downtown Main', rating: 4.8, avatarColor: 'from-amber-500 to-amber-700' },
-    { id: 'EMP-02', name: 'Barber Alex', specialty: 'Beard Grooming Specialist', status: 'Busy', branch: 'Uptown Lounge', rating: 4.9, avatarColor: 'from-blue-500 to-indigo-700' },
-    { id: 'EMP-03', name: 'Barber John', specialty: 'Hair Styling & Dyeing', status: 'Off-Duty', branch: 'Northside Hub', rating: 4.7, avatarColor: 'from-emerald-500 to-teal-700' }
-  ]);
+  // Barbers Roster loaded from Db
+  const [employees, setEmployees] = useState<DbEmployee[]>([]);
 
   // Hardcoded Branches Configuration
   const [branches, setBranches] = useState<Branch[]>([
@@ -104,7 +94,7 @@ export default function AdminDashboard() {
   ]);
 
   // Form states for adding items
-  const [newEmployee, setNewEmployee] = useState({ name: '', specialty: '', branch: 'Downtown Main' });
+  const [newEmployee, setNewEmployee] = useState({ name: '', username: '', password: '', specialty: '', branch: 'Downtown Main' });
   const [newBranch, setNewBranch] = useState({ name: '', address: '', manager: '', chairs: 3 });
 
   // Navigation Items
@@ -216,8 +206,13 @@ export default function AdminDashboard() {
                     <td><strong>${tx.customerName}</strong><br/>@${tx.username}</td>
                     <td>${tx.selectedServices.map(s => s.name).join(', ')}</td>
                     <td>${tx.date} ${tx.time}</td>
-                    <td>₱${getTxTotalPrice(tx)}</td>
-                    <td><span style="font-weight: bold; color: ${tx.status === 'PAID' ? '#10b981' : tx.status === 'VOIDED' ? '#ef4444' : '#f59e0b'};">${tx.status}</span></td>
+                    <td><span style="font-weight: bold; color: ${
+                      tx.status === 'PAID' ? '#10b981' : 
+                      tx.status === 'VOIDED' ? '#ef4444' : 
+                      tx.status === 'IN_CHAIR' ? '#3b82f6' : 
+                      tx.status === 'WAITING' ? '#8b5cf6' : 
+                      '#f59e0b'
+                    };">${tx.status}</span></td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -279,51 +274,50 @@ export default function AdminDashboard() {
   };
 
   const handleToggleEmployeeStatus = (id: string) => {
-    setEmployees(prev =>
-      prev.map(emp => {
-        if (emp.id === id) {
-          const nextStatusMap: Record<'Available' | 'Busy' | 'Off-Duty', 'Available' | 'Busy' | 'Off-Duty'> = {
-            'Available': 'Busy',
-            'Busy': 'Off-Duty',
-            'Off-Duty': 'Available'
-          };
-          const nextStatus = nextStatusMap[emp.status];
-          triggerToast(`${emp.name} is now ${nextStatus}`, 'info');
-          return { ...emp, status: nextStatus };
-        }
-        return emp;
-      })
-    );
+    const emp = employees.find(e => e.id === id);
+    if (!emp) return;
+
+    const nextStatusMap: Record<'Available' | 'Busy' | 'Off-Duty', 'Available' | 'Busy' | 'Off-Duty'> = {
+      'Available': 'Busy',
+      'Busy': 'Off-Duty',
+      'Off-Duty': 'Available'
+    };
+    const nextStatus = nextStatusMap[emp.status];
+    updateEmployee(id, { status: nextStatus });
+    setEmployees(getEmployees());
+    triggerToast(`${emp.name} is now ${nextStatus}`, 'info');
   };
 
   const handleAddEmployee = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmployee.name || !newEmployee.specialty) {
+    if (!newEmployee.name || !newEmployee.username || !newEmployee.specialty) {
       triggerToast('Please fill in all fields', 'error');
       return;
     }
 
-    const colors = [
-      'from-amber-500 to-amber-700',
-      'from-blue-500 to-indigo-700',
-      'from-emerald-500 to-teal-700',
-      'from-rose-500 to-pink-700',
-      'from-purple-500 to-violet-700'
-    ];
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    // Validate username ends with @barber
+    let finalUsername = newEmployee.username.trim().toLowerCase();
+    if (!finalUsername.endsWith('@barber')) {
+      finalUsername += '@barber';
+    }
 
-    const added: Employee = {
-      id: `EMP-0${employees.length + 1}`,
+    // Ensure uniqueness
+    if (employees.some(e => e.username === finalUsername)) {
+      triggerToast('Username is already taken by another barber', 'error');
+      return;
+    }
+
+    const added = addEmployee({
       name: newEmployee.name,
+      username: finalUsername,
+      password: newEmployee.password || 'password',
       specialty: newEmployee.specialty,
       status: 'Available',
-      branch: newEmployee.branch,
-      rating: 5.0,
-      avatarColor: randomColor
-    };
+      branch: newEmployee.branch
+    });
 
-    setEmployees(prev => [...prev, added]);
-    setNewEmployee({ name: '', specialty: '', branch: 'Downtown Main' });
+    setEmployees(getEmployees());
+    setNewEmployee({ name: '', username: '', password: '', specialty: '', branch: 'Downtown Main' });
     setIsEmployeeModalOpen(false);
     triggerToast(`Added ${added.name} to roster!`, 'success');
   };
@@ -477,6 +471,12 @@ export default function AdminDashboard() {
                 <span className="text-zinc-500">In-Chair Active</span>
                 <span className="font-bold text-blue-400">
                   {transactions.filter(t => t.status === 'IN_CHAIR').length} Chairs
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-zinc-500">Waiting Queue</span>
+                <span className="font-bold text-purple-400">
+                  {transactions.filter(t => t.status === 'WAITING').length} Clients
                 </span>
               </div>
               <div className="flex justify-between items-center text-xs">
@@ -780,7 +780,7 @@ export default function AdminDashboard() {
 
                     {/* Status tabs row */}
                     <div className="glass p-2.5 rounded-xl border border-zinc-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                      {['ALL', 'PAID', 'CHECKOUT', 'IN_CHAIR', 'DRAFT', 'VOIDED'].map((status) => (
+                      {['ALL', 'PAID', 'CHECKOUT', 'IN_CHAIR', 'WAITING', 'DRAFT', 'VOIDED'].map((status) => (
                         <button
                           key={status}
                           onClick={() => setTxStatusFilter(status)}
@@ -790,7 +790,7 @@ export default function AdminDashboard() {
                               : 'bg-zinc-900/50 hover:bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
                           }`}
                         >
-                          {status === 'IN_CHAIR' ? 'In Chair' : status === 'VOIDED' ? 'Cancelled/Voided' : status}
+                          {status === 'IN_CHAIR' ? 'In Chair' : status === 'VOIDED' ? 'Cancelled/Voided' : status === 'WAITING' ? 'Waiting' : status}
                         </button>
                       ))}
                     </div>
@@ -874,6 +874,7 @@ export default function AdminDashboard() {
                                       tx.status === 'PAID' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
                                       tx.status === 'CHECKOUT' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
                                       tx.status === 'IN_CHAIR' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                                      tx.status === 'WAITING' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
                                       tx.status === 'VOIDED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse' :
                                       'bg-zinc-900 text-zinc-500 border border-zinc-800'
                                     }`}>
@@ -881,10 +882,11 @@ export default function AdminDashboard() {
                                         tx.status === 'PAID' ? 'bg-emerald-400' :
                                         tx.status === 'CHECKOUT' ? 'bg-amber-400' :
                                         tx.status === 'IN_CHAIR' ? 'bg-blue-400' :
+                                        tx.status === 'WAITING' ? 'bg-purple-400' :
                                         tx.status === 'VOIDED' ? 'bg-rose-400' :
                                         'bg-zinc-500'
                                       }`} />
-                                      {tx.status === 'IN_CHAIR' ? 'In Chair' : tx.status === 'VOIDED' ? 'Cancelled' : tx.status}
+                                      {tx.status === 'IN_CHAIR' ? 'In Chair' : tx.status === 'VOIDED' ? 'Cancelled' : tx.status === 'WAITING' ? 'Waiting' : tx.status}
                                     </span>
                                   </td>
 
@@ -906,7 +908,7 @@ export default function AdminDashboard() {
                                         Void Session
                                       </button>
                                     )}
-                                    {(tx.status === 'PAID' || tx.status === 'DRAFT') && (
+                                    {(tx.status === 'PAID' || tx.status === 'DRAFT' || tx.status === 'WAITING') && (
                                       <span className="text-[9px] font-bold text-zinc-600 uppercase">Audit Locked</span>
                                     )}
                                     {tx.status === 'VOIDED' && (
@@ -1087,6 +1089,33 @@ export default function AdminDashboard() {
                     placeholder="e.g. Barber Luke"
                     value={newEmployee.name}
                     onChange={(e) => setNewEmployee(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 px-4 py-2.5 rounded-xl text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">
+                    Username / ID (e.g., mark@barber)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. luke@barber"
+                    value={newEmployee.username}
+                    onChange={(e) => setNewEmployee(prev => ({ ...prev, username: e.target.value.toLowerCase() }))}
+                    className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 px-4 py-2.5 rounded-xl text-sm focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">
+                    Login Password
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Defaults to 'password'"
+                    value={newEmployee.password || ''}
+                    onChange={(e) => setNewEmployee(prev => ({ ...prev, password: e.target.value }))}
                     className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 px-4 py-2.5 rounded-xl text-sm focus:outline-none focus:border-amber-500"
                   />
                 </div>

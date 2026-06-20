@@ -19,7 +19,12 @@ import {
   Info,
   ChevronRight,
   ClipboardList,
-  AlertCircle
+  AlertCircle,
+  Armchair,
+  Star,
+  Users,
+  TrendingUp,
+  DollarSign
 } from 'lucide-react';
 import { useAppSelector } from '@/lib/hooks';
 import { 
@@ -30,7 +35,9 @@ import {
   getActiveUserTransaction, 
   getTransactions, 
   DbUser, 
-  DbTransaction 
+  DbTransaction,
+  getEmployee,
+  DbEmployee
 } from '@/lib/trustLockDb';
 
 export default function Profile() {
@@ -38,6 +45,8 @@ export default function Profile() {
   
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<DbUser | null>(null);
+  const [currentEmployee, setCurrentEmployee] = useState<DbEmployee | null>(null);
+  const [userRole, setUserRole] = useState<'customer' | 'barber' | null>(null);
   
   // Login / Register state
   const [isLogin, setIsLogin] = useState(true);
@@ -53,6 +62,7 @@ export default function Profile() {
   const [activeCategory, setActiveCategory] = useState<'services' | 'creative' | 'packages' | 'addons'>('services');
   const [redeemedPoints, setRedeemedPoints] = useState(false);
   const [mobileTab, setMobileTab] = useState<'queue' | 'history'>('queue');
+  const [preferredBarber, setPreferredBarber] = useState<string | null>(null);
 
   const showPointsToggle = useMemo(() => {
     const hasEnoughPoints = currentUser && currentUser.points >= 200;
@@ -68,6 +78,7 @@ export default function Profile() {
   }, [showPointsToggle]);
 
   // Real-time active transaction & history
+  const [transactions, setTransactions] = useState<DbTransaction[]>([]);
   const [activeTx, setActiveTx] = useState<DbTransaction | null>(null);
   const [userHistory, setUserHistory] = useState<DbTransaction[]>([]);
 
@@ -77,22 +88,43 @@ export default function Profile() {
     
     const checkSession = () => {
       const loggedInUsername = localStorage.getItem('pablings_current_user');
+      const allTransactions = getTransactions();
+      setTransactions(allTransactions);
+      
       if (loggedInUsername) {
-        const user = getUser(loggedInUsername);
-        if (user) {
-          setCurrentUser(user);
-          // Load active transactions & history
-          const active = getActiveUserTransaction(loggedInUsername);
-          setActiveTx(active);
-          
-          const history = getTransactions().filter(t => t.username === loggedInUsername && (t.status === 'PAID' || t.status === 'VOIDED'));
-          setUserHistory(history);
+        if (loggedInUsername.endsWith('@barber')) {
+          const emp = getEmployee(loggedInUsername);
+          if (emp) {
+            setCurrentEmployee(emp);
+            setUserRole('barber');
+            setCurrentUser(null);
+          } else {
+            localStorage.removeItem('pablings_current_user');
+            setCurrentEmployee(null);
+            setUserRole(null);
+          }
         } else {
-          localStorage.removeItem('pablings_current_user');
-          setCurrentUser(null);
+          const user = getUser(loggedInUsername);
+          if (user) {
+            setCurrentUser(user);
+            setUserRole('customer');
+            setCurrentEmployee(null);
+            // Load active transactions & history
+            const active = getActiveUserTransaction(loggedInUsername);
+            setActiveTx(active);
+            
+            const history = allTransactions.filter(t => t.username === loggedInUsername && (t.status === 'PAID' || t.status === 'VOIDED'));
+            setUserHistory(history);
+          } else {
+            localStorage.removeItem('pablings_current_user');
+            setCurrentUser(null);
+            setUserRole(null);
+          }
         }
       } else {
         setCurrentUser(null);
+        setCurrentEmployee(null);
+        setUserRole(null);
       }
     };
 
@@ -154,7 +186,17 @@ export default function Profile() {
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
-      const user = getUser(usernameInput);
+      const normalizedUsername = usernameInput.trim().toLowerCase();
+      if (normalizedUsername.endsWith('@barber')) {
+        const emp = getEmployee(normalizedUsername);
+        if (emp && emp.password === passwordInput) {
+          localStorage.setItem('pablings_current_user', emp.username);
+          window.dispatchEvent(new Event('storage'));
+          return;
+        }
+      }
+      
+      const user = getUser(normalizedUsername);
       if (user && user.password === passwordInput) {
         localStorage.setItem('pablings_current_user', user.username);
         window.dispatchEvent(new Event('storage'));
@@ -168,6 +210,8 @@ export default function Profile() {
   const handleLogout = () => {
     localStorage.removeItem('pablings_current_user');
     setCurrentUser(null);
+    setCurrentEmployee(null);
+    setUserRole(null);
     setActiveTx(null);
     setUserHistory([]);
     setIsBookingFlowActive(false);
@@ -207,13 +251,15 @@ export default function Profile() {
         price: s.price
       })),
       status: 'DRAFT',
-      redeemedPoints: redeemedPoints && showPointsToggle
+      redeemedPoints: redeemedPoints && showPointsToggle,
+      preferredBarber: preferredBarber
     });
 
     setActiveTx(createdTx);
     setSelectedServices([]);
     setIsBookingFlowActive(false);
     setRedeemedPoints(false);
+    setPreferredBarber(null);
   };
 
   // Calculations for loyalty milestone
@@ -240,6 +286,15 @@ export default function Profile() {
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (pointsPercentage / 100) * circumference;
 
+  const waitingPosition = useMemo(() => {
+    if (!activeTx || activeTx.status !== 'WAITING') return 0;
+    const sameBarberWaiting = transactions
+      .filter(t => t.status === 'WAITING' && t.preferredBarber === activeTx.preferredBarber)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const idx = sameBarberWaiting.findIndex(t => t.id === activeTx.id);
+    return idx >= 0 ? idx + 1 : 0;
+  }, [activeTx, transactions]);
+
   return (
     <main className="min-h-screen pt-20 sm:pt-24 px-4 sm:px-6 pb-8 sm:pb-12 bg-zinc-950 text-zinc-100 flex flex-col items-center relative overflow-hidden">
       <Navbar />
@@ -250,7 +305,7 @@ export default function Profile() {
       <div className="w-full max-w-4xl relative z-10 flex flex-col gap-8">
         
         <AnimatePresence mode="wait">
-          {!currentUser ? (
+          {!userRole ? (
             
             // AUTHENTICATION CARDS (LOGGED OUT)
             <motion.div
@@ -352,8 +407,8 @@ export default function Profile() {
                 </form>
               )}
             </motion.div>
-          ) : (
-            // PROFILE DASHBOARD (LOGGED IN)
+          ) : userRole === 'customer' && currentUser ? (
+            // PROFILE DASHBOARD (LOGGED IN - CUSTOMER)
             <motion.div
               key="dashboard"
               initial={{ opacity: 0 }}
@@ -500,7 +555,7 @@ export default function Profile() {
 
                 {/* QUEUE TIMELINE & DETAILS OR BOOKING INLINE FORM */}
                 <AnimatePresence mode="wait">
-                  {activeTx && (activeTx.status === 'DRAFT' || activeTx.status === 'IN_CHAIR' || activeTx.status === 'CHECKOUT') ? (
+                  {activeTx && (activeTx.status === 'DRAFT' || activeTx.status === 'WAITING' || activeTx.status === 'IN_CHAIR' || activeTx.status === 'CHECKOUT') ? (
                     
                     // LIVE QUEUE TRACKER
                     <motion.div
@@ -508,9 +563,10 @@ export default function Profile() {
                       initial={{ opacity: 0, y: 15 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -15 }}
-                      className={`glass p-6 sm:p-8 rounded-[2.5rem] border relative overflow-hidden ${
+                      className={`glass p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] border relative overflow-hidden ${
                         activeTx.status === 'IN_CHAIR' ? 'border-blue-500/20' :
                         activeTx.status === 'CHECKOUT' ? 'border-emerald-500/20 bg-emerald-500/5 animate-pulse' :
+                        activeTx.status === 'WAITING' ? 'border-purple-500/20 bg-purple-500/5' :
                         'border-amber-500/20'
                       }`}
                     >
@@ -518,10 +574,12 @@ export default function Profile() {
                         <span className={`w-2 h-2 rounded-full ${
                           activeTx.status === 'IN_CHAIR' ? 'bg-blue-400 animate-pulse' :
                           activeTx.status === 'CHECKOUT' ? 'bg-emerald-400 animate-pulse' :
+                          activeTx.status === 'WAITING' ? 'bg-purple-400 animate-pulse' :
                           'bg-amber-400 animate-pulse'
                         }`} />
                         <h3 className="font-bold text-white text-sm uppercase tracking-wider">
                           {activeTx.status === 'DRAFT' && 'Queue Status: Pending Assignment'}
+                          {activeTx.status === 'WAITING' && 'Queue Status: Waiting List'}
                           {activeTx.status === 'IN_CHAIR' && 'Queue Status: Active in Chair'}
                           {activeTx.status === 'CHECKOUT' && 'Queue Status: Checkout Settle'}
                         </h3>
@@ -538,6 +596,12 @@ export default function Profile() {
                               <p className="text-xs text-zinc-400 leading-relaxed">
                                 Present this **Check-In QR** token to the receptionist. They will scan this to assign your Barber and Chair.
                               </p>
+                              {activeTx.preferredBarber && (
+                                <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5 justify-center md:justify-start">
+                                  <Armchair size={12} className="text-amber-500" />
+                                  <span>Preferred Barber: {activeTx.preferredBarber}</span>
+                                </div>
+                              )}
                               <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-xl text-left">
                                 <div className="flex justify-between items-center mb-1.5">
                                   <span className="text-[8px] font-bold text-zinc-500 uppercase block">Selections Locked</span>
@@ -567,6 +631,29 @@ export default function Profile() {
                                     );
                                   })}
                                 </div>
+                              </div>
+                            </div>
+                          </>
+                        ) : activeTx.status === 'WAITING' ? (
+                          <>
+                            <div className="w-20 h-20 bg-purple-500/10 text-purple-400 rounded-2xl flex items-center justify-center shrink-0 relative">
+                              <Armchair size={32} />
+                              <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-purple-500 text-zinc-950 rounded-full flex items-center justify-center text-[10px] font-black font-mono">
+                                #{waitingPosition}
+                              </span>
+                            </div>
+                            <div className="space-y-3 flex-1 w-full">
+                              <p className="text-xs text-zinc-300">
+                                You are in the waiting queue for <strong className="text-white">{activeTx.preferredBarber || 'Any Barber'}</strong>.
+                              </p>
+                              <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl inline-flex flex-col gap-1.5 w-full text-left">
+                                <div className="flex justify-between items-center text-xs font-bold text-zinc-400">
+                                  <span>Queue Position:</span>
+                                  <span className="font-mono text-purple-400">#{waitingPosition} in line</span>
+                                </div>
+                                <p className="text-[9px] text-zinc-500 leading-snug">
+                                  Please sit back and relax in the lounge area. The receptionist will call you when a chair becomes vacant.
+                                </p>
                               </div>
                             </div>
                           </>
@@ -687,6 +774,26 @@ export default function Profile() {
 
                           {selectedServices.length > 0 && (
                             <div className="space-y-4 pt-4 border-t border-zinc-900">
+                              {/* Preferred Barber Selection */}
+                              <div className="space-y-1.5">
+                                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                                  Preferred Barber (Optional)
+                                </label>
+                                <select
+                                  value={preferredBarber || ''}
+                                  onChange={(e) => setPreferredBarber(e.target.value || null)}
+                                  className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 px-3.5 py-2.5 rounded-xl text-xs font-semibold focus:outline-none focus:border-amber-500/50 cursor-pointer"
+                                >
+                                  <option value="">Any Barber (No Preference)</option>
+                                  <option value="Barber Mark">Barber Mark</option>
+                                  <option value="Barber Alex">Barber Alex</option>
+                                  <option value="Barber John">Barber John</option>
+                                </select>
+                                <p className="text-[9px] text-zinc-500 leading-snug">
+                                  Select a preferred stylist. You will be placed in their waiting line if they are currently busy.
+                                </p>
+                              </div>
+
                               {/* Use Points Toggle */}
                               {showPointsToggle && (
                                 <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-2xl flex items-center justify-between text-xs">
@@ -781,6 +888,9 @@ export default function Profile() {
 
             </div> {/* Closing grid div */}
           </motion.div>
+          ) : (
+            // BARBER POV DASHBOARD (LOGGED IN - BARBER)
+            <BarberDashboard key="barber-dashboard" currentEmployee={currentEmployee!} handleLogout={handleLogout} transactions={transactions} />
           )}
         </AnimatePresence>
 
@@ -791,5 +901,264 @@ export default function Profile() {
 
 // Inline helper
 function getTxTotalPrice(tx: DbTransaction) {
+  if (tx.redeemedPoints) {
+    return tx.selectedServices.reduce((sum, s, idx) => {
+      if (idx === 0) return sum;
+      return sum + s.price;
+    }, 0);
+  }
   return tx.selectedServices.reduce((sum, s) => sum + s.price, 0);
+}
+
+interface BarberDashboardProps {
+  currentEmployee: DbEmployee;
+  handleLogout: () => void;
+  transactions: DbTransaction[];
+}
+
+function BarberDashboard({ currentEmployee, handleLogout, transactions }: BarberDashboardProps) {
+  const barberTxs = useMemo(() => {
+    return transactions
+      .filter(t => t.assignedBarber === currentEmployee.name && t.status === 'PAID')
+      .sort((a, b) => b.id.localeCompare(a.id)); // sort latest transactions first
+  }, [transactions, currentEmployee.name]);
+
+  const todayStr = useMemo(() => {
+    return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+  }, []);
+
+  // Today's completed transactions
+  const todayTxs = useMemo(() => {
+    return barberTxs.filter(t => t.date === todayStr);
+  }, [barberTxs, todayStr]);
+
+  // Today's calculations
+  const todaySales = useMemo(() => {
+    return todayTxs.reduce((sum, t) => sum + getTxTotalPrice(t), 0);
+  }, [todayTxs]);
+
+  const todayCommission = useMemo(() => {
+    return todaySales * 0.4;
+  }, [todaySales]);
+
+  // Lifetime calculations
+  const lifetimeSales = useMemo(() => {
+    return barberTxs.reduce((sum, t) => sum + getTxTotalPrice(t), 0);
+  }, [barberTxs]);
+
+  const lifetimeCommission = useMemo(() => {
+    return lifetimeSales * 0.4;
+  }, [lifetimeSales]);
+
+  // Group transactions by date
+  const groupedTxs = useMemo(() => {
+    const groups: Record<string, DbTransaction[]> = {};
+    barberTxs.forEach((tx) => {
+      const date = tx.date;
+      if (!groups[date]) groups[date] = [];
+      groups[date].push(tx);
+    });
+    return groups;
+  }, [barberTxs]);
+
+  // Sort dates descending
+  const sortedDates = useMemo(() => {
+    return Object.keys(groupedTxs).sort((a, b) => b.localeCompare(a));
+  }, [groupedTxs]);
+
+  const formatDateLabel = (dateStr: string) => {
+    if (dateStr === todayStr) {
+      return 'Today';
+    }
+    try {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      }
+    } catch (e) {}
+    return dateStr;
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      className="flex flex-col gap-6 w-full max-w-4xl"
+    >
+      {/* Barber Header Card */}
+      <div className="glass p-6 sm:p-8 rounded-[2rem] border border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-6 relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left">
+          <div className={`w-16 h-16 bg-gradient-to-br ${currentEmployee.avatarColor} text-zinc-950 rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg`}>
+            {currentEmployee.name.split(' ').map(n => n[0]).join('')}
+          </div>
+          <div>
+            <div className="flex items-center gap-2 justify-center sm:justify-start">
+              <h2 className="text-xl font-black text-white tracking-tight uppercase">
+                {currentEmployee.name}
+              </h2>
+              <span className="text-[10px] bg-amber-500/15 border border-amber-500/30 text-amber-400 px-2 py-0.5 rounded-lg font-black uppercase tracking-wider">
+                Barber Account
+              </span>
+            </div>
+            <p className="text-xs text-zinc-400 mt-1 font-semibold">{currentEmployee.specialty}</p>
+            <p className="text-[10px] text-zinc-500 font-mono mt-0.5">ID: @{currentEmployee.username}</p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
+          <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-xl text-xs font-bold text-amber-500 font-mono">
+            <Star size={14} className="fill-amber-500 shrink-0" />
+            <span>{currentEmployee.rating.toFixed(1)} Rating</span>
+          </div>
+
+          <button
+            onClick={handleLogout}
+            className="w-full sm:w-auto px-4 py-2.5 bg-zinc-900 border border-zinc-800 hover:border-rose-950 text-zinc-400 hover:text-rose-400 transition-all rounded-xl text-[10px] uppercase font-black tracking-wider flex items-center justify-center gap-1.5"
+          >
+            <LogOut size={12} className="shrink-0" />
+            Sign Out
+          </button>
+        </div>
+
+        <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
+      </div>
+
+      {/* Roster & Branch Info Banner */}
+      <div className="glass px-5 py-3 rounded-2xl border border-purple-500/10 flex items-center gap-2.5 bg-purple-500/5 text-xs text-zinc-400">
+        <Sparkles size={16} className="text-purple-400 shrink-0 animate-pulse" />
+        <span>Logged in as stylist for <strong className="text-white">{currentEmployee.branch}</strong>. Daily earnings calculation verified.</span>
+      </div>
+
+      {/* Metrics Summary Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        {/* Card 1: Today's Commission */}
+        <div className="glass p-6 rounded-2xl border border-zinc-800 relative overflow-hidden group">
+          <div className="p-2.5 bg-amber-500/10 rounded-xl text-amber-500 inline-block mb-3">
+            <TrendingUp size={20} />
+          </div>
+          <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Today's Commission (40%)</p>
+          <h4 className="text-2xl font-black text-white font-mono">
+            ₱{todayCommission.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </h4>
+          <p className="text-[9px] text-zinc-400 mt-2 font-semibold">
+            Based on ₱{todaySales.toLocaleString()} gross sales ({todayTxs.length} clients)
+          </p>
+        </div>
+
+        {/* Card 2: Lifetime Commission */}
+        <div className="glass p-6 rounded-2xl border border-zinc-800 relative overflow-hidden group">
+          <div className="p-2.5 bg-purple-500/10 rounded-xl text-purple-400 inline-block mb-3">
+            <DollarSign size={20} />
+          </div>
+          <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Lifetime Commission</p>
+          <h4 className="text-2xl font-black text-white font-mono">
+            ₱{lifetimeCommission.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </h4>
+          <p className="text-[9px] text-zinc-400 mt-2 font-semibold">
+            Based on ₱{lifetimeSales.toLocaleString()} total gross sales
+          </p>
+        </div>
+
+        {/* Card 3: Served Clients */}
+        <div className="glass p-6 rounded-2xl border border-zinc-800 relative overflow-hidden group">
+          <div className="p-2.5 bg-blue-500/10 rounded-xl text-blue-400 inline-block mb-3">
+            <Users size={20} />
+          </div>
+          <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Total Completed Visits</p>
+          <h4 className="text-2xl font-black text-white font-mono">
+            {barberTxs.length}
+          </h4>
+          <p className="text-[9px] text-zinc-400 mt-2 font-semibold">
+            Clients styled and settled at register
+          </p>
+        </div>
+
+      </div>
+
+      {/* Transaction History Section */}
+      <div className="glass p-6 sm:p-8 rounded-[2rem] border border-zinc-800 flex flex-col gap-6">
+        <div>
+          <h3 className="font-bold text-white text-sm uppercase tracking-wider flex items-center gap-2">
+            <ClipboardList size={16} className="text-amber-500" />
+            Daily Commission Logs
+          </h3>
+          <p className="text-[10px] text-zinc-500 mt-0.5">Chronological audit of completed services and 40% payouts.</p>
+        </div>
+
+        <div className="h-[1px] bg-zinc-800/60" />
+
+        {sortedDates.length === 0 ? (
+          <div className="py-12 text-center text-zinc-600 text-xs italic">
+            No completed sessions recorded for your roster name yet...
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {sortedDates.map((date) => {
+              const dayTxs = groupedTxs[date];
+              const dayGross = dayTxs.reduce((sum, t) => sum + getTxTotalPrice(t), 0);
+              const dayComm = dayGross * 0.4;
+              const isToday = date === todayStr;
+
+              return (
+                <div key={date} className="space-y-3">
+                  {/* Day Header */}
+                  <div className="flex justify-between items-end border-b border-zinc-900 pb-2">
+                    <h4 className="text-xs font-black uppercase text-white flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${isToday ? 'bg-amber-500 animate-pulse' : 'bg-zinc-600'}`} />
+                      {formatDateLabel(date)}
+                    </h4>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase">
+                      Day Share: <strong className="text-amber-500 font-mono">₱{dayComm.toFixed(2)}</strong>
+                    </span>
+                  </div>
+
+                  {/* Day Visits List */}
+                  <div className="grid grid-cols-1 gap-3">
+                    {dayTxs.map((tx) => (
+                      <div
+                        key={tx.id}
+                        className="p-4 bg-zinc-900/40 border border-zinc-850 hover:border-zinc-800 transition-all rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 text-xs"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[9px] font-bold text-amber-500">{tx.id}</span>
+                            <span className="text-[10px] text-zinc-400 font-bold">{tx.time}</span>
+                          </div>
+                          <p className="font-bold text-white text-sm">{tx.customerName}</p>
+                          <p className="text-[10px] text-zinc-500">@{tx.username}</p>
+                        </div>
+
+                        <div className="space-y-1 text-left sm:text-center flex-1 max-w-md w-full sm:w-auto">
+                          <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Services Rendered</p>
+                          <p className="font-semibold text-zinc-300 truncate">
+                            {tx.selectedServices.map(s => s.name).join(' + ')}
+                          </p>
+                        </div>
+
+                        <div className="flex sm:flex-col justify-between sm:justify-start items-center sm:items-end w-full sm:w-auto border-t sm:border-t-0 border-zinc-850 pt-2 sm:pt-0 font-mono">
+                          <div className="text-left sm:text-right">
+                            <span className="text-[8px] text-zinc-500 uppercase block">Ticket Gross</span>
+                            <span className="font-bold text-zinc-400 text-xs">₱{getTxTotalPrice(tx)}</span>
+                          </div>
+                          <div className="text-right mt-1">
+                            <span className="text-[8px] text-amber-500 font-bold uppercase block">40% Commission</span>
+                            <span className="font-black text-amber-400 text-sm">
+                              ₱{(getTxTotalPrice(tx) * 0.4).toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
 }

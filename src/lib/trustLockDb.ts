@@ -13,7 +13,8 @@ export interface DbTransaction {
   assignedSeat: string | null;
   startTime: string | null;
   endTime: string | null;
-  status: 'DRAFT' | 'IN_CHAIR' | 'CHECKOUT' | 'PAID' | 'VOIDED';
+  status: 'DRAFT' | 'WAITING' | 'IN_CHAIR' | 'CHECKOUT' | 'PAID' | 'VOIDED';
+  preferredBarber: string | null; // Selected preferred barber
   loyaltyPointsEarned: number;
   redeemedPoints: boolean; // Flag if user paid with 200 points
   userRedeemedPoints?: boolean; // Flag if customer opted for points reward check-in
@@ -52,6 +53,7 @@ const DEFAULT_TRANSACTIONS: DbTransaction[] = [
     startTime: '2026-06-19T14:00:00Z',
     endTime: '2026-06-19T14:45:00Z',
     status: 'PAID',
+    preferredBarber: 'Barber Mark',
     loyaltyPointsEarned: 64,
     redeemedPoints: false,
     date: '2026-06-19',
@@ -69,6 +71,7 @@ const DEFAULT_TRANSACTIONS: DbTransaction[] = [
     startTime: '2026-06-19T15:30:00Z',
     endTime: '2026-06-19T16:15:00Z',
     status: 'PAID',
+    preferredBarber: 'Barber Alex',
     loyaltyPointsEarned: 39,
     redeemedPoints: false,
     date: '2026-06-19',
@@ -86,6 +89,7 @@ const DEFAULT_TRANSACTIONS: DbTransaction[] = [
     startTime: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 mins ago
     endTime: null,
     status: 'IN_CHAIR',
+    preferredBarber: 'Barber John',
     loyaltyPointsEarned: 0,
     redeemedPoints: false,
     date: '2026-06-19',
@@ -103,10 +107,30 @@ const DEFAULT_TRANSACTIONS: DbTransaction[] = [
     startTime: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
     endTime: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
     status: 'CHECKOUT',
+    preferredBarber: 'Barber Mark',
     loyaltyPointsEarned: 0,
     redeemedPoints: false,
     date: '2026-06-19',
     time: '18:10'
+  },
+  {
+    id: 'TR-1005',
+    customerName: 'Jane Smith',
+    username: 'janesmith',
+    selectedServices: [
+      { id: 's2', name: "Women's Cut", price: 399 },
+      { id: 'a4', name: 'Shampoo & Blow Dry', price: 199 }
+    ],
+    assignedBarber: 'Barber Mark',
+    assignedSeat: 'Seat 1',
+    startTime: new Date().toISOString(),
+    endTime: new Date().toISOString(),
+    status: 'PAID',
+    preferredBarber: 'Barber Mark',
+    loyaltyPointsEarned: 60,
+    redeemedPoints: false,
+    date: new Date().toLocaleDateString('en-CA'),
+    time: '12:30'
   }
 ];
 
@@ -124,7 +148,14 @@ export function getTransactions(): DbTransaction[] {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_TRANSACTIONS));
       return DEFAULT_TRANSACTIONS;
     }
-    return JSON.parse(raw);
+    const list = JSON.parse(raw) as DbTransaction[];
+    // Auto-migrate: if the demo user hasn't got the new fake transaction TR-1005, append it!
+    if (!list.some(t => t.id === 'TR-1005')) {
+      const updated = [...list, ...DEFAULT_TRANSACTIONS.filter(d => d.id === 'TR-1005')];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    }
+    return list;
   } catch (error) {
     console.error('Error reading localStorage transactions', error);
     return DEFAULT_TRANSACTIONS;
@@ -141,7 +172,7 @@ export function saveTransactions(transactions: DbTransaction[]) {
   }
 }
 
-export function addTransaction(tx: Omit<DbTransaction, 'id' | 'date' | 'time' | 'startTime' | 'endTime' | 'assignedBarber' | 'assignedSeat' | 'loyaltyPointsEarned' | 'redeemedPoints'> & { redeemedPoints?: boolean }): DbTransaction {
+export function addTransaction(tx: Omit<DbTransaction, 'id' | 'date' | 'time' | 'startTime' | 'endTime' | 'assignedBarber' | 'assignedSeat' | 'loyaltyPointsEarned' | 'redeemedPoints' | 'userRedeemedPoints'> & { redeemedPoints?: boolean }): DbTransaction {
   const transactions = getTransactions();
   const nextId = `TR-${1001 + transactions.length}`;
   const now = new Date();
@@ -269,10 +300,106 @@ export function incrementUserPoints(username: string, points: number) {
   saveUsers(updatedUsers);
 }
 
+export interface DbEmployee {
+  id: string;
+  name: string;
+  username: string; // unique identifier (e.g. mark@barber)
+  password?: string;
+  specialty: string;
+  status: 'Available' | 'Busy' | 'Off-Duty';
+  branch: string;
+  rating: number;
+  avatarColor: string;
+}
+
+const DEFAULT_EMPLOYEES: DbEmployee[] = [
+  { id: 'EMP-01', name: 'Barber Mark', username: 'mark@barber', password: 'password', specialty: 'Classic Cuts & Fades', status: 'Available', branch: 'Downtown Main', rating: 4.8, avatarColor: 'from-amber-500 to-amber-700' },
+  { id: 'EMP-02', name: 'Barber Alex', username: 'alex@barber', password: 'password', specialty: 'Beard Grooming Specialist', status: 'Busy', branch: 'Uptown Lounge', rating: 4.9, avatarColor: 'from-blue-500 to-indigo-700' },
+  { id: 'EMP-03', name: 'Barber John', username: 'john@barber', password: 'password', specialty: 'Hair Styling & Dyeing', status: 'Off-Duty', branch: 'Northside Hub', rating: 4.7, avatarColor: 'from-emerald-500 to-teal-700' }
+];
+
+const EMPLOYEES_STORAGE_KEY = 'pablings_trustlock_employees';
+
+export function getEmployees(): DbEmployee[] {
+  if (!isClient) return DEFAULT_EMPLOYEES;
+  try {
+    const raw = localStorage.getItem(EMPLOYEES_STORAGE_KEY);
+    if (!raw) {
+      localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(DEFAULT_EMPLOYEES));
+      return DEFAULT_EMPLOYEES;
+    }
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error('Error reading localStorage employees', error);
+    return DEFAULT_EMPLOYEES;
+  }
+}
+
+export function saveEmployees(employees: DbEmployee[]) {
+  if (!isClient) return;
+  try {
+    localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(employees));
+    window.dispatchEvent(new Event('storage'));
+  } catch (error) {
+    console.error('Error saving localStorage employees', error);
+  }
+}
+
+export function getEmployee(username: string): DbEmployee | null {
+  const employees = getEmployees();
+  return employees.find(e => e.username === username.toLowerCase()) || null;
+}
+
+export function addEmployee(emp: Omit<DbEmployee, 'id' | 'rating' | 'avatarColor'>): DbEmployee {
+  const employees = getEmployees();
+  const nextId = `EMP-0${employees.length + 1}`;
+  
+  const colors = [
+    'from-amber-500 to-amber-700',
+    'from-blue-500 to-indigo-700',
+    'from-emerald-500 to-teal-700',
+    'from-rose-500 to-pink-700',
+    'from-purple-500 to-violet-700'
+  ];
+  const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
+  const newEmp: DbEmployee = {
+    ...emp,
+    id: nextId,
+    username: emp.username.toLowerCase(),
+    password: emp.password || 'password',
+    rating: 5.0,
+    avatarColor: randomColor
+  };
+
+  employees.push(newEmp);
+  saveEmployees(employees);
+  return newEmp;
+}
+
+export function updateEmployee(id: string, updates: Partial<DbEmployee>): DbEmployee | null {
+  const employees = getEmployees();
+  let updatedEmp: DbEmployee | null = null;
+
+  const nextEmployees = employees.map(emp => {
+    if (emp.id === id) {
+      updatedEmp = { ...emp, ...updates };
+      return updatedEmp;
+    }
+    return emp;
+  });
+
+  if (updatedEmp) {
+    saveEmployees(nextEmployees);
+  }
+  return updatedEmp;
+}
+
 // Clean databases
 export function resetDatabase() {
   if (!isClient) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_TRANSACTIONS));
   localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(DEFAULT_USERS));
+  localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(DEFAULT_EMPLOYEES));
   window.dispatchEvent(new Event('storage'));
 }

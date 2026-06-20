@@ -38,6 +38,17 @@ export default function StaffTerminal() {
     return () => clearInterval(interval);
   }, []);
 
+  // Synchronize selection states when selected transaction changes
+  useEffect(() => {
+    const tx = transactions.find(t => t.id === selectedTxId);
+    if (tx) {
+      setSelectedBarber(tx.preferredBarber);
+    } else {
+      setSelectedBarber(null);
+    }
+    setSelectedSeat(null);
+  }, [selectedTxId]);
+
   const barbers = [
     { name: 'Barber Mark', status: 'Available' },
     { name: 'Barber Alex', status: 'Available' },
@@ -54,6 +65,30 @@ export default function StaffTerminal() {
   const activeSessions = transactions.filter(t => t.status === 'IN_CHAIR');
   const activeCheckouts = transactions.filter(t => t.status === 'CHECKOUT');
   const pendingDrafts = transactions.filter(t => t.status === 'DRAFT');
+
+  const waitingQueue = transactions
+    .filter(t => t.status === 'WAITING')
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const getWaitingPosition = (tx: DbTransaction) => {
+    const sameBarberWaiting = transactions
+      .filter(t => t.status === 'WAITING' && t.preferredBarber === tx.preferredBarber)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const idx = sameBarberWaiting.findIndex(t => t.id === tx.id);
+    return idx >= 0 ? idx + 1 : 0;
+  };
+
+  const handlePlaceInWaitingList = () => {
+    if (selectedTxId) {
+      updateTransaction(selectedTxId, {
+        status: 'WAITING',
+        preferredBarber: selectedBarber || (selectedTx ? selectedTx.preferredBarber : null)
+      });
+      setSelectedBarber(null);
+      setSelectedSeat(null);
+      setSelectedTxId(null);
+    }
+  };
 
   const busyBarbers = activeSessions.map(s => s.assignedBarber);
   const occupiedSeats = activeSessions.map(s => s.assignedSeat);
@@ -172,6 +207,42 @@ export default function StaffTerminal() {
               )}
             </div>
 
+            {/* Section A.5: Waiting Queue (WAITING) */}
+            <div>
+              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+                Waiting Queue ({waitingQueue.length})
+              </p>
+              {waitingQueue.length === 0 ? (
+                <p className="text-[10px] text-zinc-600 italic">No clients waiting...</p>
+              ) : (
+                <div className="space-y-2">
+                  {waitingQueue.map((tx) => {
+                    const pos = getWaitingPosition(tx);
+                    return (
+                      <button
+                        key={tx.id}
+                        onClick={() => setSelectedTxId(tx.id)}
+                        className={`w-full p-3 rounded-xl border text-left flex justify-between items-center transition-all ${
+                          selectedTxId === tx.id 
+                            ? 'bg-purple-500/10 border-purple-500 text-purple-400' 
+                            : 'bg-zinc-900/40 border-zinc-850 text-zinc-400 hover:border-zinc-800'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate">{tx.customerName}</p>
+                          <p className="text-[9px] font-semibold text-zinc-500 mt-0.5">
+                            {tx.preferredBarber || 'Any Barber'} • Queue #{pos}
+                          </p>
+                        </div>
+                        <span className="text-[9px] font-bold font-mono text-purple-400 shrink-0 ml-2">₱{getTxTotalPrice(tx)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Section B: Active Services (IN_CHAIR) */}
             <div>
               <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
@@ -267,7 +338,7 @@ export default function StaffTerminal() {
                   </p>
                 </div>
               </motion.div>
-            ) : selectedTx.status === 'DRAFT' ? (
+            ) : (selectedTx.status === 'DRAFT' || selectedTx.status === 'WAITING') ? (
               // Step 1: Assign Station Modal
               <motion.div 
                 key="assignment"
@@ -279,7 +350,7 @@ export default function StaffTerminal() {
                 <div className="flex justify-between items-start gap-4">
                   <div>
                     <h3 className="text-xl font-black text-white tracking-tight uppercase flex items-center gap-2">
-                      Assign Barber & Chair
+                      {selectedTx.status === 'WAITING' ? 'Assign Chair for Waiting Client' : 'Assign Barber & Chair'}
                     </h3>
                     <div className="flex items-center gap-2 mt-1">
                       <p className="text-zinc-500 text-xs">Token: <span className="text-amber-500 font-mono font-bold">{selectedTx.id}</span></p>
@@ -289,6 +360,11 @@ export default function StaffTerminal() {
                         </span>
                       )}
                     </div>
+                    {selectedTx.preferredBarber && (
+                      <span className="text-[9px] font-black text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-lg uppercase tracking-wider flex items-center gap-1.5 mt-1.5 w-fit">
+                        <Armchair size={8} /> {selectedTx.status === 'WAITING' ? 'Waiting for:' : 'Preferred Barber:'} {selectedTx.preferredBarber}
+                      </span>
+                    )}
                   </div>
                   
                   {/* Service Lock Metadata Info */}
@@ -378,17 +454,28 @@ export default function StaffTerminal() {
                 <div className="pt-6 border-t border-zinc-900 flex gap-4">
                   <button
                     onClick={() => handleVoidSession(selectedTxId!)}
-                    className="px-4 py-3 bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-rose-400 hover:border-rose-950 transition-all rounded-xl text-xs uppercase font-bold flex items-center gap-1.5"
+                    className="px-4 py-3 bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-rose-400 hover:border-rose-950 transition-all rounded-xl text-xs uppercase font-bold flex items-center gap-1.5 shrink-0"
                   >
                     <Trash2 size={14} />
                     Void Check-In
                   </button>
+
+                  {selectedTx.status === 'DRAFT' && (
+                    <button
+                      onClick={handlePlaceInWaitingList}
+                      className="px-5 py-3.5 bg-purple-900/30 border border-purple-800 hover:bg-purple-900/50 text-purple-300 transition-all rounded-xl text-xs uppercase font-black flex items-center gap-1.5"
+                    >
+                      <Armchair size={14} />
+                      Place in Waiting List
+                    </button>
+                  )}
+
                   <button 
                     disabled={!selectedBarber || !selectedSeat}
                     onClick={handleConfirmAssignment}
                     className="flex-1 py-3.5 bg-zinc-100 text-zinc-950 font-black rounded-xl hover:bg-white transition-all disabled:opacity-50 flex items-center justify-center gap-2 uppercase tracking-tight text-sm"
                   >
-                    Confirm Assignment & Lock Status
+                    {selectedTx.status === 'WAITING' ? 'Move to Chair' : 'Confirm Assignment & Lock Status'}
                     <ChevronRight size={18} />
                   </button>
                 </div>
